@@ -10,18 +10,33 @@ struct Chunk {};
 namespace VoxelOctree {
 #define MAX_OCTREE_NODES 100
 
-struct Node {
+struct NodeData {
 	uint32_t child_pointer;
 	uint32_t masks;
+};
+struct VoxelData {
+	uint32_t color;
+	uint32_t padding;
+};
 
-	Node(uint32_t child, uint8_t child_mask, uint8_t leaf_mask) : child_pointer(child) {
-		masks = pack_masks(child_mask, leaf_mask);
+union Node {
+	NodeData node;
+	VoxelData voxel;
+	Node() : node{ 0, 0 } {}
+
+	static Node makeNode(uint32_t child, uint8_t childMask, uint8_t leafMask) {
+		Node n;
+		n.node.child_pointer = child;
+		n.node.masks = (uint32_t(childMask) << 8) | leafMask;
+		return n;
 	}
-
-	uint32_t pack_masks(uint8_t child_mask, uint8_t leaf_mask) {
-		return (static_cast<uint32_t>(child_mask) << 8) | leaf_mask;
+	static Node makeVoxel(uint32_t color) {
+		Node n;
+		n.voxel.color = color;
+		return n;
 	}
 };
+static_assert(sizeof(Node) == 8, "Node must be 64 bits");
 struct OctreeHeader {
 	int center[3];
 	int half_len;
@@ -37,7 +52,33 @@ struct Octree {
 
 	void build() {
 		nodes.clear();
-		nodes.push_back(Node(0, 0, 7));
+		header.root_node = 0;
+
+		// [0]      root: all 8 octants exist, none are leaves
+		// [1..8]   one internal node per octant (octant o lives at 1 + o)
+		// [9..64]  voxels, 7 per octant (the 8th, the outer corner, is removed)
+		nodes.push_back(Node::makeNode(1, 0xFF, 0x00));
+
+		for (uint32_t o = 0; o < 8; o++) {
+			// The outer corner of octant o is the child whose bits equal o's bits.
+			uint8_t mask = 0xFF & ~(1u << o);
+			nodes.push_back(Node::makeNode(9 + o * 7, mask, mask));
+		}
+
+		for (uint32_t o = 0; o < 8; o++) {
+			for (uint32_t c = 0; c < 8; c++) {
+				if (c == o) continue;  // skip the outer corner
+
+				// Voxel coords in the 4x4x4 grid, same bit convention as the shader
+				uint32_t x = (o & 1) * 2 + (c & 1);
+				uint32_t y = ((o >> 1) & 1) * 2 + ((c >> 1) & 1);
+				uint32_t z = ((o >> 2) & 1) * 2 + ((c >> 2) & 1);
+
+				uint32_t color = 0xFF000000u | ((z * 85) << 16) | ((y * 85) << 8) | (x * 85);
+				nodes.push_back(Node::makeVoxel(color));
+			}
+		}
+		// nodes.size() == 65
 	}
 };
 }  // namespace VoxelOctree

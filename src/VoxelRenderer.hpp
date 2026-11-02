@@ -17,8 +17,8 @@ struct CameraData {
 	Vector3 up;
 	float pad4;
 
-	CameraData() : pos(0, 0, 0), forward(0, 0, 0), right(0, 0, 0), up(0, 0, 0) {}
-	CameraData(Vector3 pos) : pos(pos), forward(0, 0, 0), right(0, 0, 0), up(0, 0, 0) {}
+	CameraData() : pos(0, 0, 0), forward(0, 0, 1), right(1, 0, 0), up(0, 1, 0) {}
+	CameraData(Vector3 pos) : pos(pos), forward(0, 0, 1), right(1, 0, 0), up(0, 1, 0) {}
 
 	void updateRotation(float yaw, float pitch) {
 		forward = { std::cos(pitch) * std::sin(yaw), std::sin(pitch), std::cos(pitch) * std::cos(yaw) };
@@ -39,6 +39,8 @@ struct CameraData {
 			   forward.x * right.y - forward.y * right.x };
 	}
 };
+static_assert(sizeof(CameraData) == 64, "CameraData must be 64 bytes");
+static_assert(offsetof(CameraData, forward) == 16, "forward must start at byte 16");
 struct Camera {
 	CameraData gpuBuffer;
 	Vector3 pos;

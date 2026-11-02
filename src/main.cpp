@@ -21,7 +21,7 @@ struct AppState {
 
 	Uint64 lastTick;
 
-	AppState() : lastTick(SDL_GetTicksNS()) {}
+	AppState() : lastTick(SDL_GetTicksNS()) { camera.move({ 0, 0, -6 }); }
 };
 
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
@@ -42,6 +42,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
 		SDL_Log("Failed to create window: %s", SDL_GetError());
 		return SDL_APP_FAILURE;
 	}
+	SDL_SetWindowRelativeMouseMode(app.window, true);
 	if (!app.renderer.Initialize(app.window, 1280, 720)) {
 		return SDL_APP_FAILURE;
 	}
@@ -88,6 +89,12 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
 	SDL_ReleaseGPUFence(app.renderer.getDevice(), fence);
 	SDL_ReleaseGPUTransferBuffer(app.renderer.getDevice(), transferBuffer);
 
+	Vector3& fwd = app.camera.gpuBuffer.forward;
+	Vector3& rgt = app.camera.gpuBuffer.right;
+	Vector3& up = app.camera.gpuBuffer.up;
+	SDL_Log("fwd: (%f, %f, %f), rgt: (%f, %f, %f), up: (%f, %f, %f)", fwd.x, fwd.y, fwd.z, rgt.x, rgt.y, rgt.z, up.x,
+			up.y, up.z);
+
 	return SDL_APP_CONTINUE;
 }
 SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
@@ -114,6 +121,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 		if (event->key.scancode == SDL_SCANCODE_Q) app.keys[SDL_SCANCODE_Q] = false;
 	} else if (event->type == SDL_EVENT_MOUSE_MOTION) {
 		app.camera.move(event->motion.xrel * 0.01, -event->motion.yrel * 0.01);
+		Vector3& fwd = app.camera.gpuBuffer.forward;
+		Vector3& rgt = app.camera.gpuBuffer.right;
+		Vector3& up = app.camera.gpuBuffer.up;
+		SDL_Log("fwd: (%f, %f, %f), rgt: (%f, %f, %f), up: (%f, %f, %f)", fwd.x, fwd.y, fwd.z, rgt.x, rgt.y, rgt.z,
+				up.x, up.y, up.z);
 	}
 
 	return SDL_APP_CONTINUE;
