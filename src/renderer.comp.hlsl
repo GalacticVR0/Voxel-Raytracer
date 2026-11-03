@@ -83,10 +83,12 @@ float3 castRay(Header header, float3 ro, float3 rd, out float hitT) {
     
 
     while (sp > 0) {
-        sp--;
-        Node node = loadNode(stackNode[sp]);
-        float3 center = stackCenter[sp];
-        float half_len = stackHalf[sp];
+        int cur = sp - 1;
+        Node node = loadNode(stackNode[cur]);
+        float3 center = stackCenter[cur];
+        float half_len = stackHalf[cur];
+
+        int w = sp;
 
         float child_half = half_len * 0.5;
         for (uint oct = 0; oct < 8; oct++) {
@@ -104,11 +106,20 @@ float3 castRay(Header header, float3 ro, float3 rd, out float hitT) {
                 hitT = t0;
             }
             else if (sp < STACK_SIZE) {
-                stackNode[sp] = childIndex(node, oct);
-                stackCenter[sp] = cc;
-                stackHalf[sp] = child_half;
-                sp++;
+                stackNode[w] = childIndex(node, oct);
+                stackCenter[w] = cc;
+                stackHalf[w] = child_half;
+                w++;
             }
+        }
+        if (w > sp) {
+            stackNode[cur] = stackNode[w - 1];
+            stackCenter[cur] = stackCenter[w - 1];
+            stackHalf[cur] = stackHalf[w - 1];
+            sp = w - 1;
+        }
+        else {
+            sp = cur;
         }
     }
     
@@ -144,11 +155,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float screenX = uv.x * aspect * fovScale;
     float screenY = -uv.y * fovScale;
 
-    float3 fwd    = float3(0, 0, 1);
-    float3 right  = float3(1, 0, 0);
-    float3 up     = float3(0, 1, 0);
-    float3 rayDir = normalize(screenX * cameraRight + screenY * cameraUp + cameraForward);
 
+    float3 rayDir = normalize(screenX * cameraRight + screenY * cameraUp + cameraForward);
     // Pixel color
     float t;
     //float4 pixelColor = float4(castRay(header, cameraPos, rayDir, t), 1);
