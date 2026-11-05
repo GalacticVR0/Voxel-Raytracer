@@ -12,7 +12,6 @@
 struct AppState {
 	SDL_Window* window;
 	VoxelRenderer renderer;
-	OctreeHandler::Octree octree;
 
 	std::unordered_map<SDL_Scancode, bool> keys;
 	Camera camera;
@@ -45,10 +44,15 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
 		return SDL_APP_FAILURE;
 	}
 	// Build chunk
-
+	World world({ 1, 1, 1 });
+	for (int z = 0; z < 10; ++z) {
+		for (int x = 0; x < 10; ++x) {
+			uint32_t color = 0xFF000000 | ((x * 25) << 16) | ((z * 25) << 8);
+			world.setVoxel({ x, 0, z }, Chunking::Voxel{ color });
+		}
+	}
 	// Upload octree to gpu
-	app.octree.buildTestTree();
-	app.renderer.submitOctree(app.octree);
+	app.renderer.submitOctree(world.buildOctree());
 	return SDL_APP_CONTINUE;
 }
 

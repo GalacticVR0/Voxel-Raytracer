@@ -10,7 +10,7 @@ namespace Chunking {
 constexpr int CHUNK_DEPTH = 5;
 constexpr int CHUNK_SIZE = 1 << CHUNK_DEPTH;
 struct Voxel {
-	uint8_t type;
+	uint32_t color;
 };
 constexpr Voxel NULL_VOXEL = Voxel{ 0 };
 struct Chunk {
@@ -32,14 +32,12 @@ struct Chunk {
 };
 }  // namespace Chunking
 namespace OctreeHandler {
-#define MAX_OCTREE_NODES 100
-
 struct NodeData {
 	uint32_t child_pointer;
 	uint32_t masks;
 };
 struct VoxelData {
-	uint32_t id;
+	uint32_t color;
 	uint32_t padding;
 };
 
@@ -56,7 +54,7 @@ union Node {
 	}
 	static Node makeVoxel(uint32_t color) {
 		Node n;
-		n.voxel.id = color;
+		n.voxel = { color, 0 };
 		return n;
 	}
 };
@@ -113,6 +111,7 @@ class World {
 	static constexpr int BIAS = WORLD_CHUNKS / 2;
 
    public:
+	World(Vector3<int> worldSize) { Initialize(worldSize); }
 	Chunking::Voxel getVoxel(Vector3<int> pos) const {
 		auto [chunkPos, localPos] = split(pos);
 
@@ -129,6 +128,15 @@ class World {
 
 		it->second.setVoxel(localPos, v);
 	}
+	void Initialize(Vector3<int> worldSize) {
+		for (int z = 0; z <= worldSize.z; ++z) {
+			for (int y = 0; y <= worldSize.y; ++y) {
+				for (int x = 0; x <= worldSize.x; ++x) {
+					chunks.emplace(Vector3<int>(x, y, z), Chunking::Chunk(Vector3<int>(x, y, z)));
+				}
+			}
+		}
+	}
 
 	Vector3<uint32_t> biasedChunkCoord(const Chunking::Chunk& c) {
 		Vector3<int> p = c.getPosition();
@@ -136,14 +144,14 @@ class World {
 	}
 	struct Entry {
 		uint64_t key;
-		uint32_t type;
+		uint32_t color;
 	};
 	struct LevelEntry {
-		uint64_t key;
-		uint32_t type;
-		uint32_t firstChild;
-		uint8_t childMask;
-		uint8_t leafMask;
+		uint64_t key = 0;
+		uint32_t color = 0;
+		uint32_t firstChild = 0;
+		uint8_t childMask = 0;
+		uint8_t leafMask = 0;
 	};
 	void buildChunk(const Chunking::Chunk& chunk, std::vector<Entry>& out) {
 		const uint64_t chunkBits = morton(biasedChunkCoord(chunk)) << (3 * Chunking::CHUNK_DEPTH);
@@ -152,9 +160,9 @@ class World {
 		for (uint32_t m = 0; m < total; ++m) {
 			Vector3<uint32_t> p = decode(m);
 			Chunking::Voxel v = chunk.getVoxel({ (int)p.x, (int)p.y, (int)p.z });
-			if (v.type == Chunking::NULL_VOXEL.type) continue;
+			if (v.color == Chunking::NULL_VOXEL.color) continue;
 
-			out.push_back({ chunkBits | m, v.type });
+			out.push_back({ chunkBits | m, v.color });
 		}
 	}
 	std::vector<Entry> buildWorld() {
@@ -182,7 +190,7 @@ class World {
 		for (const auto& e : entries) {
 			LevelEntry le;
 			le.key = e.key;
-			le.type = e.type;
+			le.color = e.color;
 			levels[worldDepth].push_back(le);
 		}
 
@@ -211,10 +219,10 @@ class World {
 		for (int l = 0; l <= worldDepth; ++l) base[l + 1] = base[l] + (uint32_t)levels[l].size();
 		nodes.reserve(base[worldDepth + 1]);
 
-		for (int l = 0; l < worldDepth; ++l) {
+		for (int l = 0; l <= worldDepth; ++l) {
 			for (const LevelEntry& e : levels[l]) {
 				if (l == worldDepth)
-					nodes.push_back(Node::makeVoxel(e.type));
+					nodes.push_back(Node::makeVoxel(e.color));
 				else
 					nodes.push_back(Node::makeNode(base[l + 1] + e.firstChild, e.childMask, e.leafMask));
 			}
@@ -228,6 +236,8 @@ class World {
 		octree.header.center = { 0, 0, 0 };
 		octree.header.root_node = 0;
 		octree.nodes = buildNodes(buildWorld(), WORLD_DEPTH);
+		SDL_Log("Built octree with %zu nodes", octree.nodes.size());
+		return octree;
 	}
 
    private:
