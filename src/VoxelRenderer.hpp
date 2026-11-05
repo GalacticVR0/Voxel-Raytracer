@@ -131,8 +131,7 @@ class VoxelRenderer {
 		size_t array_size = sizeof(OctreeHandler::Node) * octree.nodes.size();
 		SDL_GPUBufferCreateInfo octreeInfo = { 0 };
 		octreeInfo.usage = SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ;
-		octreeInfo.size = sizeof(OctreeHandler::OctreeHeader) +
-						  sizeof(OctreeHandler::Node) * MAX_OCTREE_NODES;  // Add the size of the metadata
+		octreeInfo.size = sizeof(OctreeHandler::OctreeHeader) + array_size;	 // Add the size of the metadata
 		octreeBuffer = SDL_CreateGPUBuffer(device, &octreeInfo);
 
 		// Create transfer buffer
