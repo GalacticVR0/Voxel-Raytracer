@@ -12,9 +12,7 @@
 struct AppState {
 	SDL_Window* window;
 	VoxelRenderer renderer;
-
-	VoxelOctree::Octree octree;
-	SDL_GPUBuffer* octreeBuffer;
+	OctreeHandler::Octree octree;
 
 	std::unordered_map<SDL_Scancode, bool> keys;
 	Camera camera;
@@ -42,61 +40,18 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
 		SDL_Log("Failed to create window: %s", SDL_GetError());
 		return SDL_APP_FAILURE;
 	}
-	SDL_SetWindowRelativeMouseMode(app.window, true);
+	SDL_SetWindowRelativeMouseMode(app.window, false);
 	if (!app.renderer.Initialize(app.window, 1280, 720)) {
 		return SDL_APP_FAILURE;
 	}
+	// Build chunk
 
-	// Build and upload octree to gpu
-	app.octree.build();
-	size_t array_size = sizeof(VoxelOctree::Node) * app.octree.nodes.size();
-	SDL_GPUBufferCreateInfo octreeInfo = { 0 };
-	octreeInfo.usage = SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ;
-	octreeInfo.size = sizeof(VoxelOctree::OctreeHeader) +
-					  sizeof(VoxelOctree::Node) * MAX_OCTREE_NODES;	 // Add the size of the metadata
-	app.octreeBuffer = SDL_CreateGPUBuffer(app.renderer.getDevice(), &octreeInfo);
-
-	// Create transfer buffer
-	SDL_GPUTransferBufferCreateInfo transferInfo = { .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-													 .size = Uint32(sizeof(VoxelOctree::OctreeHeader) + array_size) };
-	SDL_GPUTransferBuffer* transferBuffer = SDL_CreateGPUTransferBuffer(app.renderer.getDevice(), &transferInfo);
-
-	// Copy octree data to gpu buffer
-	void* map_ptr = SDL_MapGPUTransferBuffer(app.renderer.getDevice(), transferBuffer, false);
-
-	if (map_ptr) {
-		uint8_t* byte_ptr = static_cast<uint8_t*>(map_ptr);
-
-		SDL_memcpy(byte_ptr, &app.octree.header, sizeof(VoxelOctree::OctreeHeader));
-		SDL_memcpy(byte_ptr + sizeof(VoxelOctree::OctreeHeader), app.octree.nodes.data(), array_size);
-
-		SDL_UnmapGPUTransferBuffer(app.renderer.getDevice(), transferBuffer);
-	}
-
-	// Submit transfer buffer via copy pass
-	SDL_GPUCommandBuffer* cmd_buffer = SDL_AcquireGPUCommandBuffer(app.renderer.getDevice());
-	SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(cmd_buffer);
-	SDL_GPUTransferBufferLocation source = { .transfer_buffer = transferBuffer, .offset = 0 };
-	SDL_GPUBufferRegion dest = { .buffer = app.octreeBuffer,
-								 .offset = 0,
-								 .size = Uint32(sizeof(VoxelOctree::OctreeHeader) + array_size) };
-
-	SDL_UploadToGPUBuffer(copy_pass, &source, &dest, false);
-	SDL_EndGPUCopyPass(copy_pass);
-
-	SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd_buffer);
-	SDL_WaitForGPUFences(app.renderer.getDevice(), true, &fence, 1);
-	SDL_ReleaseGPUFence(app.renderer.getDevice(), fence);
-	SDL_ReleaseGPUTransferBuffer(app.renderer.getDevice(), transferBuffer);
-
-	Vector3& fwd = app.camera.gpuBuffer.forward;
-	Vector3& rgt = app.camera.gpuBuffer.right;
-	Vector3& up = app.camera.gpuBuffer.up;
-	SDL_Log("fwd: (%f, %f, %f), rgt: (%f, %f, %f), up: (%f, %f, %f)", fwd.x, fwd.y, fwd.z, rgt.x, rgt.y, rgt.z, up.x,
-			up.y, up.z);
-
+	// Upload octree to gpu
+	app.octree.buildTestTree();
+	app.renderer.submitOctree(app.octree);
 	return SDL_APP_CONTINUE;
 }
+
 SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 	AppState& app = *static_cast<AppState*>(appstate);
 	if (event->type == SDL_EVENT_QUIT) {
@@ -121,15 +76,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 		if (event->key.scancode == SDL_SCANCODE_Q) app.keys[SDL_SCANCODE_Q] = false;
 	} else if (event->type == SDL_EVENT_MOUSE_MOTION) {
 		app.camera.move(event->motion.xrel * 0.01, -event->motion.yrel * 0.01);
-		Vector3& fwd = app.camera.gpuBuffer.forward;
-		Vector3& rgt = app.camera.gpuBuffer.right;
-		Vector3& up = app.camera.gpuBuffer.up;
-		SDL_Log("fwd: (%f, %f, %f), rgt: (%f, %f, %f), up: (%f, %f, %f)", fwd.x, fwd.y, fwd.z, rgt.x, rgt.y, rgt.z,
-				up.x, up.y, up.z);
 	}
 
 	return SDL_APP_CONTINUE;
 }
+
 SDL_AppResult SDL_AppIterate(void* appstate) {
 	AppState& app = *static_cast<AppState*>(appstate);
 	Uint64 currentTick = SDL_GetTicksNS();
@@ -138,7 +89,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
 	float speed = 10 * dt;
 	app.camera.gpuBuffer.updateRotation(app.camera.yaw, app.camera.pitch);
-	Vector3 step;
+	Vector3f step;
 
 	if (app.keys.contains(SDL_SCANCODE_W) && app.keys[SDL_SCANCODE_W]) {
 		step += { app.camera.gpuBuffer.forward.x * speed, app.camera.gpuBuffer.forward.y * speed,
@@ -166,17 +117,17 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 	}
 	app.camera.move(step);
 
-	app.renderer.DrawFrame(app.window, app.camera.gpuBuffer, app.octreeBuffer);
+	app.renderer.DrawFrame(app.window, app.camera.gpuBuffer);
 
 	return SDL_APP_CONTINUE;
 }
+
 void SDL_AppQuit(void* appstate, SDL_AppResult result) {
 	if (!appstate) {
 		return;
 	}
 	AppState& app = *static_cast<AppState*>(appstate);
 
-	if (app.octreeBuffer) SDL_ReleaseGPUBuffer(app.renderer.getDevice(), app.octreeBuffer);
 	if (app.window) SDL_DestroyWindow(app.window);
 
 	delete &app;

@@ -5,20 +5,21 @@
 #include <string>
 #include <tuple>
 
+#include "VoxelHandler.hpp"
 #include "utils.hpp"
 
 struct CameraData {
-	Vector3 pos;
+	Vector3f pos;
 	float pad1;
-	Vector3 forward;
+	Vector3f forward;
 	float pad2;
-	Vector3 right;
+	Vector3f right;
 	float pad3;
-	Vector3 up;
+	Vector3f up;
 	float pad4;
 
 	CameraData() : pos(0, 0, 0), forward(0, 0, 1), right(1, 0, 0), up(0, 1, 0) {}
-	CameraData(Vector3 pos) : pos(pos), forward(0, 0, 1), right(1, 0, 0), up(0, 1, 0) {}
+	CameraData(Vector3f pos) : pos(pos), forward(0, 0, 1), right(1, 0, 0), up(0, 1, 0) {}
 
 	void updateRotation(float yaw, float pitch) {
 		forward = { std::cos(pitch) * std::sin(yaw), std::sin(pitch), std::cos(pitch) * std::cos(yaw) };
@@ -43,12 +44,12 @@ static_assert(sizeof(CameraData) == 64, "CameraData must be 64 bytes");
 static_assert(offsetof(CameraData, forward) == 16, "forward must start at byte 16");
 struct Camera {
 	CameraData gpuBuffer;
-	Vector3 pos;
+	Vector3f pos;
 	float yaw, pitch;
 
 	Camera() : gpuBuffer(), pos(0, 0, 0), yaw(0), pitch(0) {}
 
-	void move(const Vector3& position) {
+	void move(const Vector3f& position) {
 		pos += position;
 		gpuBuffer.pos += position;
 	}
@@ -89,7 +90,7 @@ class VoxelRenderer {
 		}
 		return true;
 	}
-	void DrawFrame(SDL_Window* window, CameraData camera, SDL_GPUBuffer* octreeBuffer) {
+	void DrawFrame(SDL_Window* window, CameraData camera) {
 		SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(device);
 		if (!commandBuffer) return;
 
@@ -126,7 +127,48 @@ class VoxelRenderer {
 
 		SDL_SubmitGPUCommandBuffer(commandBuffer);
 	}
+	void submitOctree(const OctreeHandler::Octree& octree) {
+		size_t array_size = sizeof(OctreeHandler::Node) * octree.nodes.size();
+		SDL_GPUBufferCreateInfo octreeInfo = { 0 };
+		octreeInfo.usage = SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ;
+		octreeInfo.size = sizeof(OctreeHandler::OctreeHeader) +
+						  sizeof(OctreeHandler::Node) * MAX_OCTREE_NODES;  // Add the size of the metadata
+		octreeBuffer = SDL_CreateGPUBuffer(device, &octreeInfo);
 
+		// Create transfer buffer
+		SDL_GPUTransferBufferCreateInfo transferInfo = { .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+														 .size =
+															 Uint32(sizeof(OctreeHandler::OctreeHeader) + array_size) };
+		SDL_GPUTransferBuffer* transferBuffer = SDL_CreateGPUTransferBuffer(device, &transferInfo);
+
+		// Copy octree data to gpu buffer
+		void* map_ptr = SDL_MapGPUTransferBuffer(device, transferBuffer, false);
+
+		if (map_ptr) {
+			uint8_t* byte_ptr = static_cast<uint8_t*>(map_ptr);
+
+			SDL_memcpy(byte_ptr, &octree.header, sizeof(OctreeHandler::OctreeHeader));
+			SDL_memcpy(byte_ptr + sizeof(OctreeHandler::OctreeHeader), octree.nodes.data(), array_size);
+
+			SDL_UnmapGPUTransferBuffer(device, transferBuffer);
+		}
+
+		// Submit transfer buffer via copy pass
+		SDL_GPUCommandBuffer* cmd_buffer = SDL_AcquireGPUCommandBuffer(device);
+		SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(cmd_buffer);
+		SDL_GPUTransferBufferLocation source = { .transfer_buffer = transferBuffer, .offset = 0 };
+		SDL_GPUBufferRegion dest = { .buffer = octreeBuffer,
+									 .offset = 0,
+									 .size = Uint32(sizeof(OctreeHandler::OctreeHeader) + array_size) };
+
+		SDL_UploadToGPUBuffer(copy_pass, &source, &dest, false);
+		SDL_EndGPUCopyPass(copy_pass);
+
+		SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd_buffer);
+		SDL_WaitForGPUFences(device, true, &fence, 1);
+		SDL_ReleaseGPUFence(device, fence);
+		SDL_ReleaseGPUTransferBuffer(device, transferBuffer);
+	}
 	std::tuple<void*, size_t> generateBytecodeFromHLSL(const char* computeShaderSource) {
 		size_t bytecodeSize = 0;
 		SDL_ShaderCross_HLSL_Info hlslInfo = {
@@ -180,6 +222,7 @@ class VoxelRenderer {
 
 	void Shutdown() {
 		if (!device) return;
+		if (octreeBuffer) SDL_ReleaseGPUBuffer(device, octreeBuffer);
 		if (computePipeline) SDL_ReleaseGPUComputePipeline(device, computePipeline);
 		if (renderTexture) SDL_ReleaseGPUTexture(device, renderTexture);
 		SDL_DestroyGPUDevice(device);
@@ -193,6 +236,7 @@ class VoxelRenderer {
 		int textureWidth, textureHeight;
 	};
 	SDL_GPUDevice* device;
+	SDL_GPUBuffer* octreeBuffer;
 	SDL_GPUComputePipeline* computePipeline;
 	SDL_GPUTexture* renderTexture;
 
