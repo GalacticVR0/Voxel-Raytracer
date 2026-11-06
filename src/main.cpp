@@ -18,7 +18,7 @@ struct AppState {
 
 	Uint64 lastTick;
 
-	AppState() : lastTick(SDL_GetTicksNS()) { camera.move({ 0, 0, -6 }); }
+	AppState() : lastTick(SDL_GetTicksNS()), camera({ 0, 0, -6 }, 0, 0) {}
 };
 
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
@@ -79,7 +79,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 		if (event->key.scancode == SDL_SCANCODE_E) app.keys[SDL_SCANCODE_E] = false;
 		if (event->key.scancode == SDL_SCANCODE_Q) app.keys[SDL_SCANCODE_Q] = false;
 	} else if (event->type == SDL_EVENT_MOUSE_MOTION) {
-		app.camera.move(event->motion.xrel * 0.01, -event->motion.yrel * 0.01);
+		app.camera.rotate(event->motion.xrel * 0.01, -event->motion.yrel * 0.01);
 	}
 
 	return SDL_APP_CONTINUE;
@@ -92,36 +92,27 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 	app.lastTick = currentTick;
 
 	float speed = 10 * dt;
-	app.camera.gpuBuffer.updateRotation(app.camera.yaw, app.camera.pitch);
-	Vector3f step;
 
 	if (app.keys.contains(SDL_SCANCODE_W) && app.keys[SDL_SCANCODE_W]) {
-		step += { app.camera.gpuBuffer.forward.x * speed, app.camera.gpuBuffer.forward.y * speed,
-				  app.camera.gpuBuffer.forward.z * speed };
+		app.camera.move({ app.camera.gpuData.forward * speed });
 	}
 	if (app.keys.contains(SDL_SCANCODE_S) && app.keys[SDL_SCANCODE_S]) {
-		step -= { app.camera.gpuBuffer.forward.x * speed, app.camera.gpuBuffer.forward.y * speed,
-				  app.camera.gpuBuffer.forward.z * speed };
+		app.camera.move({ app.camera.gpuData.forward * -speed });
 	}
 	if (app.keys.contains(SDL_SCANCODE_A) && app.keys[SDL_SCANCODE_A]) {
-		step -= { app.camera.gpuBuffer.right.x * speed, step.y -= app.camera.gpuBuffer.right.y * speed,
-				  app.camera.gpuBuffer.right.z * speed };
+		app.camera.move({ app.camera.gpuData.right * -speed });
 	}
 	if (app.keys.contains(SDL_SCANCODE_D) && app.keys[SDL_SCANCODE_D]) {
-		step += { app.camera.gpuBuffer.right.x * speed, step.y -= app.camera.gpuBuffer.right.y * speed,
-				  app.camera.gpuBuffer.right.z * speed };
+		app.camera.move({ app.camera.gpuData.right * speed });
 	}
 	if (app.keys.contains(SDL_SCANCODE_E) && app.keys[SDL_SCANCODE_E]) {
-		step +=
-			{ app.camera.gpuBuffer.up.x * speed, app.camera.gpuBuffer.up.y * speed, app.camera.gpuBuffer.up.z * speed };
+		app.camera.move({ app.camera.gpuData.up * speed });
 	}
 	if (app.keys.contains(SDL_SCANCODE_Q) && app.keys[SDL_SCANCODE_Q]) {
-		step -=
-			{ app.camera.gpuBuffer.up.x * speed, app.camera.gpuBuffer.up.y * speed, app.camera.gpuBuffer.up.z * speed };
+		app.camera.move({ app.camera.gpuData.up * -speed });
 	}
-	app.camera.move(step);
 
-	app.renderer.DrawFrame(app.window, app.camera.gpuBuffer);
+	app.renderer.DrawFrame(app.window, app.camera.gpuData);
 
 	return SDL_APP_CONTINUE;
 }

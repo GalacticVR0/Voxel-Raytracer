@@ -20,43 +20,29 @@ struct CameraData {
 
 	CameraData() : pos(0, 0, 0), forward(0, 0, 1), right(1, 0, 0), up(0, 1, 0) {}
 	CameraData(Vector3f pos) : pos(pos), forward(0, 0, 1), right(1, 0, 0), up(0, 1, 0) {}
-
-	void updateRotation(float yaw, float pitch) {
-		forward = { std::cos(pitch) * std::sin(yaw), std::sin(pitch), std::cos(pitch) * std::cos(yaw) };
-
-		float fLength = forward.sqrMagnitude();
-		if (fLength > 0) {
-			forward /= std::sqrtf(fLength);
-		}
-
-		right = { forward.z, 0.0, -forward.x };
-
-		float rLength = right.sqrMagnitude();
-		if (rLength > 0) {
-			right /= std::sqrtf(rLength);
-		}
-
-		up = { forward.y * right.z - forward.z * right.y, forward.z * right.x - forward.x * right.z,
-			   forward.x * right.y - forward.y * right.x };
-	}
 };
 static_assert(sizeof(CameraData) == 64, "CameraData must be 64 bytes");
 static_assert(offsetof(CameraData, forward) == 16, "forward must start at byte 16");
 struct Camera {
-	CameraData gpuBuffer;
-	Vector3f pos;
-	float yaw, pitch;
+	CameraData gpuData;
+	Vector3f pos = { 0, 0, 0 };
+	Quaternion rotation = { 1, 0, 0, 0 };
 
-	Camera() : gpuBuffer(), pos(0, 0, 0), yaw(0), pitch(0) {}
+	Camera(Vector3f pos, float yaw, float pitch) : pos(pos) { rotate(yaw, pitch); }
 
 	void move(const Vector3f& position) {
 		pos += position;
-		gpuBuffer.pos += position;
+		gpuData.pos += position;
 	}
-	void move(const float& yaw, const float& pitch) {
-		this->yaw += yaw;
-		this->pitch += pitch;
-		gpuBuffer.updateRotation(yaw, pitch);
+	void rotate(const float& yaw, const float& pitch) {
+		Quaternion yawRotation = Quaternion::fromAxisAngle({ 0, 1, 0 }, yaw);
+		Quaternion pitchRotation = Quaternion::fromAxisAngle({ 1, 0, 0 }, -pitch);
+
+		rotation = (yawRotation * rotation * pitchRotation).normalized();
+
+		gpuData.forward = rotation.rotate({ 0, 0, 1 });
+		gpuData.right = rotation.rotate({ 1, 0, 0 });
+		gpuData.up = rotation.rotate({ 0, 1, 0 });
 	}
 };
 class VoxelRenderer {

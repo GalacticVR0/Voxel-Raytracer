@@ -10,6 +10,13 @@ struct Vector3 {
 	T sqrMagnitude() const { return x * x + y * y + z * z; }
 	T magnitude() const { return std::sqrtf(sqrMagnitude()); }
 	Vector3 normalized() const { return *this / magnitude(); }
+	Vector3 cross(const Vector3& other) const {
+		T x = this->y * other.z - this->z * other.y;
+		T y = this->z * other.x - this->x * other.z;
+		T z = this->x * other.y - this->y * other.x;
+		return { x, y, z };
+	}
+	T dot(const Vector3& other) const { return x * other.x + y * other.y + z * other.z; }
 
 	Vector3& operator+=(const Vector3& other) {
 		x += other.x;
@@ -69,3 +76,37 @@ struct std::hash<Vector3<T>> {
 };
 
 using Vector3f = Vector3<float>;
+
+struct Quaternion {
+	float w, x, y, z;
+
+	Quaternion(float w, float x, float y, float z) : w(w), x(x), y(y), z(z) {}
+
+	Quaternion normalized() const {
+		float mag = std::sqrtf(w * w + x * x + y * y + z * z);
+		return { w / mag, x / mag, y / mag, z / mag };
+	}
+
+	Quaternion conjugate() const { return { w, -x, -y, -z }; }
+
+	Quaternion operator*(const Quaternion& other) const {
+		return { w * other.w - x * other.x - y * other.y - z * other.z,
+				 w * other.x + x * other.w + y * other.z - z * other.y,
+				 w * other.y - x * other.z + y * other.w + z * other.x,
+				 w * other.z + x * other.y - y * other.x + z * other.w };
+	}
+
+	static Quaternion fromAxisAngle(Vector3f axis, float angle) {
+		axis = axis.normalized();
+		float half = angle * 0.5f;
+		float s = std::sinf(half);
+
+		return { std::cosf(half), axis.x * s, axis.y * s, axis.z * s };
+	}
+
+	Vector3f rotate(const Vector3f& v) const {
+		Quaternion p = { 0, v.x, v.y, v.z };
+		Quaternion result = (*this) * p * this->conjugate();
+		return { result.x, result.y, result.z };
+	}
+};
