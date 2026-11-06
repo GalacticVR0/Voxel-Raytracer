@@ -1,6 +1,14 @@
 {
   "dependencies": [
     "sdl3",
-    "sdl3-shadercross"
+    "sdl3-shadercross",
+    "stb",
+    "tiff",
+    {
+      "name": "imgui",
+      "features": [
+        "sdlgpu3-binding"
+      ]
+    }
   ]
 }

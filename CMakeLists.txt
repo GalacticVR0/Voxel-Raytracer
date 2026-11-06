@@ -5,6 +5,9 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+find_package(tiff REQUIRED)
+find_package(stb REQUIRED)
+find_package(imgui REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 find_package(SDL3_shadercross CONFIG QUIET)
 
@@ -25,4 +28,4 @@ endif()
 
 add_executable(VoxelRaytracer src/main.cpp)
 
-target_link_libraries(VoxelRaytracer SDL3::SDL3 ${SHADERCROSS_TARGET})
+target_link_libraries(VoxelRaytracer TIFF::TIFF ${stb_INCLUDE_DIR} imgui::imgui SDL3::SDL3 ${SHADERCROSS_TARGET})

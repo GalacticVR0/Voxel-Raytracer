@@ -2,16 +2,22 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3_shadercross/SDL_shadercross.h>
+#include <imgui.h>
+#include <imgui_impl_sdl3.h>
+#include <imgui_impl_sdlgpu3.h>
+#define STB_PERLIN_IMPLEMENTATION
+#include <stb_perlin.h>
 
 #include <unordered_map>
 
+#include "HeightmapLoader.hpp"
 #include "VoxelHandler.hpp"
 #include "VoxelRenderer.hpp"
 #include "utils.hpp"
 
 struct AppState {
 	SDL_Window* window;
-	VoxelRenderer renderer;
+	VoxelRenderer voxelRenderer;
 
 	std::unordered_map<SDL_Scancode, bool> keys;
 	Camera camera;
@@ -34,30 +40,70 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
 		return SDL_APP_FAILURE;
 	}
 
-	app.window = SDL_CreateWindow("VoxelRaytracer", 1280, 720, SDL_WINDOW_RESIZABLE);
+	app.window = SDL_CreateWindow("VoxelRaytracer", 1280, 720, SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+
 	if (!app.window) {
 		SDL_Log("Failed to create window: %s", SDL_GetError());
 		return SDL_APP_FAILURE;
 	}
+	int pixelW, pixelH;
+	SDL_GetWindowSizeInPixels(app.window, &pixelW, &pixelH);
+	SDL_SetWindowSize(app.window, pixelW, pixelH);
+
 	SDL_SetWindowRelativeMouseMode(app.window, true);
-	if (!app.renderer.Initialize(app.window, 1280, 720)) {
+	if (!app.voxelRenderer.Initialize(app.window, pixelW, pixelH)) {
 		return SDL_APP_FAILURE;
 	}
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO();
+
+	ImGui::StyleColorsDark();
+
+	ImGui_ImplSDL3_InitForSDLGPU(app.window);
+	ImGui_ImplSDLGPU3_InitInfo initInfo = {};
+	initInfo.Device = app.voxelRenderer.getDevice();
+	initInfo.ColorTargetFormat = SDL_GetGPUSwapchainTextureFormat(app.voxelRenderer.getDevice(), app.window);
+	initInfo.MSAASamples = SDL_GPU_SAMPLECOUNT_1;
+	ImGui_ImplSDLGPU3_Init(&initInfo);
+
 	// Build chunk
+	const float noise_scale = 0.03f;
+	const float lacunarity = 2.0f;
+	const float gain = 0.5f;
+	const int octaves = 3;
+
+	const float seed_x = 1234.56f;
+	const float seed_z = 7890.12f;
+
 	World world({ 1, 1, 1 });
-	for (int z = 0; z < 10; ++z) {
-		for (int x = 0; x < 10; ++x) {
-			uint32_t color = 0xFF000000 | ((x * 25) << 16) | ((z * 25) << 8);
-			world.setVoxel({ x, 0, z }, Chunking::Voxel{ color });
+	for (int z = 0; z < Chunking::CHUNK_SIZE; ++z) {
+		for (int x = 0; x < Chunking::CHUNK_SIZE; ++x) {
+			float nx = (static_cast<float>(x) + seed_x) * noise_scale;
+			float nz = (static_cast<float>(z) + seed_z) * noise_scale;
+
+			float noise_val = stb_perlin_fbm_noise3(nx, nz, 0.0f, lacunarity, gain, octaves);
+			float height_percent = (noise_val + 1.0f) * 0.5f;
+			int max_terrain_height = static_cast<int>(height_percent * Chunking::CHUNK_SIZE);
+			uint32_t grey_intensity = static_cast<uint32_t>(height_percent * 255.0f);
+			uint32_t grey = (grey_intensity << 16) | (grey_intensity << 8) | grey_intensity;
+
+			for (int y = 0; y < Chunking::CHUNK_SIZE; ++y) {
+				if (y > max_terrain_height)
+					world.setVoxel({ x, y, z }, Chunking::NULL_VOXEL);
+				else
+					world.setVoxel({ x, y, z }, { grey });
+			}
 		}
 	}
 	// Upload octree to gpu
-	app.renderer.submitOctree(world.buildOctree());
+	app.voxelRenderer.submitOctree(world.buildOctree());
 	return SDL_APP_CONTINUE;
 }
 
 SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 	AppState& app = *static_cast<AppState*>(appstate);
+	ImGui_ImplSDL3_ProcessEvent(event);
 	if (event->type == SDL_EVENT_QUIT) {
 		return SDL_APP_SUCCESS;
 	} else if (event->type == SDL_EVENT_KEY_DOWN) {
@@ -79,7 +125,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 		if (event->key.scancode == SDL_SCANCODE_E) app.keys[SDL_SCANCODE_E] = false;
 		if (event->key.scancode == SDL_SCANCODE_Q) app.keys[SDL_SCANCODE_Q] = false;
 	} else if (event->type == SDL_EVENT_MOUSE_MOTION) {
-		app.camera.rotate(event->motion.xrel * 0.01, -event->motion.yrel * 0.01);
+		app.camera.rotate(event->motion.xrel * 0.001, -event->motion.yrel * 0.001);
 	}
 
 	return SDL_APP_CONTINUE;
@@ -92,6 +138,15 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 	app.lastTick = currentTick;
 
 	float speed = 10 * dt;
+
+	ImGui_ImplSDLGPU3_NewFrame();
+	ImGui_ImplSDL3_NewFrame();
+	ImGui::NewFrame();
+
+	ImGui::Begin("Debug Info", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+	ImGui::Text("Frame time: %.3f ms", dt * 1000.0f);
+	ImGui::Text("FPS: %.2f", 1.0f / dt);
+	ImGui::End();
 
 	if (app.keys.contains(SDL_SCANCODE_W) && app.keys[SDL_SCANCODE_W]) {
 		app.camera.move({ app.camera.gpuData.forward * speed });
@@ -112,8 +167,41 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 		app.camera.move({ app.camera.gpuData.up * -speed });
 	}
 
-	app.renderer.DrawFrame(app.window, app.camera.gpuData);
+	ImGui::Render();
+	ImDrawData* draw_data = ImGui::GetDrawData();
 
+	SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(app.voxelRenderer.getDevice());
+	if (!commandBuffer) return SDL_APP_CONTINUE;
+	app.voxelRenderer.DrawFrame(app.window, commandBuffer, app.camera.gpuData);
+
+	SDL_GPUTexture* swapchainTexture;
+	Uint32 windowW, windowH;
+	if (SDL_WaitAndAcquireGPUSwapchainTexture(commandBuffer, app.window, &swapchainTexture, &windowW, &windowH)) {
+		if (swapchainTexture != NULL) {
+			SDL_GPUBlitInfo blitInfo = {};
+			blitInfo.source.texture = app.voxelRenderer.getRenderTexture();
+			blitInfo.source.w = app.voxelRenderer.getProperties().textureWidth;
+			blitInfo.source.h = app.voxelRenderer.getProperties().textureHeight;
+
+			blitInfo.destination.texture = swapchainTexture;
+			blitInfo.destination.w = windowW;
+			blitInfo.destination.h = windowH;
+			blitInfo.filter = SDL_GPU_FILTER_LINEAR;
+
+			SDL_BlitGPUTexture(commandBuffer, &blitInfo);
+
+			ImGui_ImplSDLGPU3_PrepareDrawData(draw_data, commandBuffer);
+			SDL_GPUColorTargetInfo targetInfo = {};
+			targetInfo.texture = swapchainTexture;
+			targetInfo.load_op = SDL_GPU_LOADOP_LOAD;
+			targetInfo.store_op = SDL_GPU_STOREOP_STORE;
+
+			SDL_GPURenderPass* renderPass = SDL_BeginGPURenderPass(commandBuffer, &targetInfo, 1, nullptr);
+			ImGui_ImplSDLGPU3_RenderDrawData(draw_data, commandBuffer, renderPass);
+			SDL_EndGPURenderPass(renderPass);
+		}
+		SDL_SubmitGPUCommandBuffer(commandBuffer);
+	}
 	return SDL_APP_CONTINUE;
 }
 

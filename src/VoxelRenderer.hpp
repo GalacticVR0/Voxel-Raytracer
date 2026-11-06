@@ -47,6 +47,9 @@ struct Camera {
 };
 class VoxelRenderer {
    public:
+	struct RenderProperties {
+		int textureWidth, textureHeight;
+	};
 	bool Initialize(SDL_Window* window, uint32_t textureWidth, uint32_t textureHeight) {
 		this->properties.textureWidth = textureWidth;
 		this->properties.textureHeight = textureHeight;
@@ -76,10 +79,7 @@ class VoxelRenderer {
 		}
 		return true;
 	}
-	void DrawFrame(SDL_Window* window, CameraData camera) {
-		SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(device);
-		if (!commandBuffer) return;
-
+	void DrawFrame(SDL_Window* window, SDL_GPUCommandBuffer* commandBuffer, CameraData camera) {
 		SDL_GPUStorageTextureReadWriteBinding rwBinding = {};
 		rwBinding.texture = renderTexture;
 
@@ -92,26 +92,6 @@ class VoxelRenderer {
 		SDL_DispatchGPUCompute(computePass, (properties.textureWidth + 15) / 16, (properties.textureHeight + 15) / 16,
 							   1);
 		SDL_EndGPUComputePass(computePass);
-
-		SDL_GPUTexture* swapchainTexture;
-		Uint32 windowW, windowH;
-		if (SDL_WaitAndAcquireGPUSwapchainTexture(commandBuffer, window, &swapchainTexture, &windowW, &windowH)) {
-			if (swapchainTexture != NULL) {
-				SDL_GPUBlitInfo blitInfo = {};
-				blitInfo.source.texture = renderTexture;
-				blitInfo.source.w = properties.textureWidth;
-				blitInfo.source.h = properties.textureHeight;
-
-				blitInfo.destination.texture = swapchainTexture;
-				blitInfo.destination.w = windowW;
-				blitInfo.destination.h = windowH;
-				blitInfo.filter = SDL_GPU_FILTER_LINEAR;
-
-				SDL_BlitGPUTexture(commandBuffer, &blitInfo);
-			}
-		}
-
-		SDL_SubmitGPUCommandBuffer(commandBuffer);
 	}
 	void submitOctree(const OctreeHandler::Octree& octree) {
 		size_t array_size = sizeof(OctreeHandler::Node) * octree.nodes.size();
@@ -215,11 +195,10 @@ class VoxelRenderer {
 	~VoxelRenderer() { Shutdown(); }
 
 	SDL_GPUDevice* getDevice() const { return device; }
+	SDL_GPUTexture* getRenderTexture() const { return renderTexture; }
+	RenderProperties getProperties() const { return properties; }
 
    private:
-	struct RenderProperties {
-		int textureWidth, textureHeight;
-	};
 	SDL_GPUDevice* device;
 	SDL_GPUBuffer* octreeBuffer;
 	SDL_GPUComputePipeline* computePipeline;
